@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="基于 Vue、MapLibre GL 与 OpenFreeMap 的中国旅游景区交互地图" />
+    <title>云游中国 · 旅游景区地图</title>
+    <link rel="stylesheet" href="./libs/maplibre/maplibre-gl.css" />
+    <link rel="stylesheet" href="./css/style.css?v=2" />
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <div class="ambient ambient-one"></div>
+      <div class="ambient ambient-two"></div>
+
+      <main class="travel-shell">
+        <header class="topbar glass-panel">
+          <a class="brand" href="#" aria-label="云游中国首页" @click.prevent="resetView">
+            <span class="brand-orbit" aria-hidden="true"><span></span></span>
+            <span class="brand-copy"><strong>云游中国</strong><small>EXPLORE CHINA</small></span>
+          </a>
+
+          <div class="search-wrap" :class="{ 'is-open': showSuggestions }">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input
+              v-model.trim="searchQuery"
+              type="search"
+              placeholder="搜索景点、城市或省份，例如：故宫 / 成都 / 云南"
+              aria-label="搜索景点、城市或省份"
+              autocomplete="off"
+              @focus="showSuggestions = true"
+              @keydown.enter.prevent="searchFirst"
+              @keydown.esc="showSuggestions = false"
+            />
+            <button v-if="searchQuery" class="clear-search" type="button" aria-label="清空搜索" @click="clearSearch">×</button>
+            <kbd>Enter</kbd>
+
+            <div v-if="showSuggestions && searchQuery" class="search-results glass-panel">
+              <button
+                v-for="item in suggestions"
+                :key="item.id"
+                type="button"
+                @click.stop="focusAttraction(item)"
+              >
+                <span class="result-symbol" :class="`is-${item.category}`">{{ categoryMap[item.category].icon }}</span>
+                <span class="result-main"><strong>{{ item.name }}</strong><small>{{ item.province }} · {{ item.city }}</small></span>
+                <span class="result-rating">★ {{ item.rating }}</span>
+              </button>
+              <p v-if="!suggestions.length" class="empty-search">暂未收录该地点，试试城市名、省份或景点关键词</p>
+            </div>
+          </div>
+
+          <div class="top-actions">
+            <div class="map-health" role="status" aria-live="polite">
+              <span :class="['health-dot', `is-${mapStatus.type}`]"></span>
+              <span>{{ mapStatus.text }}</span>
+            </div>
+            <button class="round-button" type="button" aria-label="返回全国视图" @click="resetView">◎</button>
+          </div>
+        </header>
+
+        <section class="dashboard">
+          <aside class="left-rail">
+            <section class="hero-copy">
+              <span class="eyebrow">TRAVEL INTELLIGENCE</span>
+              <h1>发现值得<br /><em>抵达</em>的中国</h1>
+              <p>从千年古迹到城市新地标，在一张高清矢量地图上寻找下一站。</p>
+            </section>
+
+            <section class="overview-card glass-panel">
+              <div class="overview-head">
+                <div><span>已收录景点</span><strong>{{ attractions.length }}</strong></div>
+                <div class="sparkline" aria-hidden="true"><i v-for="height in sparkBars" :key="height" :style="{ height: `${height}%` }"></i></div>
+              </div>
+              <div class="overview-grid">
+                <div><span class="metric-icon violet">⌖</span><p><strong>{{ provinceCount }}</strong><small>省级区域</small></p></div>
+                <div><span class="metric-icon cyan">◇</span><p><strong>{{ cityCount }}</strong><small>目的地城市</small></p></div>
+              </div>
+            </section>
+
+            <nav class="category-panel glass-panel" aria-label="景点分类">
+              <div class="section-heading">
+                <div><span>探索分类</span><small>{{ visibleCount }} 个地点可见</small></div>
+                <button v-if="activeCategory !== 'all'" type="button" @click="activeCategory = 'all'">重置</button>
+              </div>
+              <button
+                v-for="category in categories"
+                :key="category.key"
+                type="button"
+                :class="['category-item', `is-${category.key}`, { active: activeCategory === category.key }]"
+                @click="activeCategory = category.key"
+              >
+                <span class="category-icon">{{ category.icon }}</span>
+                <span class="category-name"><strong>{{ category.label }}</strong><small>{{ category.description }}</small></span>
+                <span class="category-count">{{ categoryCount(category.key) }}</span>
+              </button>
+            </nav>
+          </aside>
+
+          <section class="map-stage glass-panel">
+            <div id="map" aria-label="中国旅游景区交互地图"></div>
+            <div class="map-heading glass-panel"><span>CHINA / 中国大陆</span><strong>{{ activeCategoryLabel }}</strong></div>
+            <div class="map-legend glass-panel">
+              <span><i class="legend-dot"></i>悬浮标记查看详情</span><span class="legend-divider"></span><span>滚轮缩放 · 拖动浏览</span>
+            </div>
+
+            <transition name="detail-slide">
+              <article v-if="selectedAttraction" class="selected-card glass-panel">
+                <button class="selected-close" type="button" aria-label="关闭详情" @click="selectedAttraction = null">×</button>
+                <div class="selected-visual" :class="`is-${selectedAttraction.category}`">
+                  <span>{{ categoryMap[selectedAttraction.category].icon }}</span><small>{{ categoryMap[selectedAttraction.category].label }}</small>
+                </div>
+                <div class="selected-body">
+                  <span class="selected-location">{{ selectedAttraction.province }} · {{ selectedAttraction.city }}</span>
+                  <h2>{{ selectedAttraction.name }}</h2>
+                  <div class="rating-line"><span>★ {{ selectedAttraction.rating }}</span><i></i><span>热度 {{ selectedAttraction.popularity }}</span></div>
+                  <p>{{ selectedAttraction.summary }}</p>
+                  <div class="tag-row"><span v-for="tag in selectedAttraction.highlights" :key="tag">{{ tag }}</span></div>
+                  <div class="visit-time"><span>建议游览</span><strong>{{ selectedAttraction.visitTime }}</strong></div>
+                  <button class="nav-cta" :class="`is-${selectedAttraction.category}`" type="button" @click="startNavigation(selectedAttraction)">
+                    <span class="nav-cta-icon" aria-hidden="true">⌖</span>
+                    <span class="nav-cta-copy"><strong>导航到此</strong><small>驾车 · 骑行路线</small></span>
+                    <span class="nav-cta-arrow" aria-hidden="true">→</span>
+                  </button>
+                </div>
+              </article>
+            </transition>
+
+            <transition name="route-slide">
+              <aside v-if="navigation.active" class="route-panel glass-panel">
+                <div class="route-head">
+                  <div><span class="eyebrow">ROUTE</span><strong>路线规划</strong></div>
+                  <button class="route-close" type="button" aria-label="关闭路线" @click="clearNavigation">×</button>
+                </div>
+
+                <div class="route-tabs" role="tablist" aria-label="出行方式">
+                  <button type="button" :class="{ active: navigation.profile === 'driving' }" @click="switchProfile('driving')">驾车</button>
+                  <button type="button" :class="{ active: navigation.profile === 'cycling' }" @click="switchProfile('cycling')">骑行</button>
+                </div>
+
+                <div class="route-endpoints">
+                  <div class="route-endpoint">
+                    <span class="endpoint-dot is-start"></span>
+                    <div class="endpoint-copy">
+                      <small>起点</small>
+                      <strong>{{ navigation.start ? navigation.start.label : '请选择起点' }}</strong>
+                    </div>
+                  </div>
+                  <div class="endpoint-line"></div>
+                  <div class="route-endpoint">
+                    <span class="endpoint-dot is-end"></span>
+                    <div class="endpoint-copy">
+                      <small>终点</small>
+                      <strong>{{ navigation.end ? navigation.end.label : '' }}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="route-start-actions">
+                  <button type="button" @click="locateMe">⌖ 定位</button>
+                  <button type="button" :class="{ 'is-picking': navigation.pickingStart }" @click="pickOnMap">✛ 地图选点</button>
+                  <button type="button" :class="{ 'is-picking': navigation.showAttractionPicker }" @click="navigation.showAttractionPicker = !navigation.showAttractionPicker">⌂ 选景点</button>
+                </div>
+
+                <div v-if="navigation.showAttractionPicker" class="route-attraction-picker">
+                  <button v-for="item in attractions" :key="item.id" type="button" @click="chooseAttractionStart(item)">
+                    <span>{{ item.name }}</span><small>{{ item.city }}</small>
+                  </button>
+                </div>
+
+                <p v-if="navigation.pickingStart" class="route-hint">请在地图上点击起点位置</p>
+
+                <div v-if="navigation.phase === 'locating' || navigation.phase === 'planning'" class="route-loading">
+                  {{ navigation.phase === 'locating' ? '正在获取你的位置…' : '路线规划中…' }}
+                </div>
+                <p v-else-if="navigation.phase === 'error'" class="route-error">{{ navigation.error }}</p>
+
+                <template v-if="navigation.summary">
+                  <div class="route-summary">
+                    <div><strong>{{ navDistance(navigation.summary.distance) }}</strong><small>总距离</small></div>
+                    <div><strong>{{ navDuration(navigation.summary.duration) }}</strong><small>预计用时</small></div>
+                  </div>
+
+                  <ol class="route-steps">
+                    <li v-for="(step, index) in navigation.steps" :key="index">
+                      <span class="step-index">{{ index + 1 }}</span>
+                      <div class="step-copy">
+                        <strong>{{ navInstruction(step) }}</strong>
+                        <small>{{ navDistance(step.distance) }}</small>
+                      </div>
+                    </li>
+                  </ol>
+                </template>
+              </aside>
+            </transition>
+          </section>
+
+          <aside class="right-rail">
+            <section class="ranking-card glass-panel">
+              <div class="section-heading">
+                <div><span>热门目的地</span><small>人气指数 TOP 5</small></div><span class="live-pill">LIVE</span>
+              </div>
+              <button v-for="(item, index) in topAttractions" :key="item.id" class="ranking-item" type="button" @click="focusAttraction(item)">
+                <span class="rank">{{ String(index + 1).padStart(2, '0') }}</span>
+                <span class="rank-copy"><strong>{{ item.name }}</strong><small>{{ item.city }} · {{ categoryMap[item.category].label }}</small></span>
+                <span class="rank-score">{{ item.popularity }}</span>
+              </button>
+            </section>
+
+            <section class="insight-card glass-panel">
+              <div class="insight-ring"><span>{{ coveragePercent }}%</span><small>区域覆盖</small></div>
+              <div><span class="eyebrow">MAP COVERAGE</span><h3>从城市人文<br />到自然奇境</h3><p>代表性目的地横跨东中西部，并持续补充中。</p></div>
+            </section>
+
+            <section class="tips-card glass-panel">
+              <span class="tips-icon">✦</span><div><strong>探索提示</strong><p>输入“博物馆”“云南”或“上海”，都可以快速定位相关景点。</p></div>
+            </section>
+          </aside>
+        </section>
+      </main>
+
+    </div>
+
+    <noscript>此页面需要启用 JavaScript 才能使用旅游景区地图。</noscript>
+    <script src="./libs/vue/vue.global.prod.js"></script>
+    <script src="./libs/maplibre/maplibre-gl.js"></script>
+    <script src="./js/attractions.js"></script>
+    <script src="./js/navigation.js"></script>
+    <script src="./js/app.js?v=2"></script>
+  </body>
+</html>
