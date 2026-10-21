@@ -6,7 +6,7 @@
     <meta name="description" content="基于 Vue、MapLibre GL 与 OpenFreeMap 的中国旅游景区交互地图" />
     <title>云游中国 · 旅游景区地图</title>
     <link rel="stylesheet" href="./libs/maplibre/maplibre-gl.css" />
-    <link rel="stylesheet" href="./css/style.css?v=2" />
+    <link rel="stylesheet" href="./css/style.css?v=3" />
   </head>
   <body>
     <div id="app" v-cloak>
@@ -56,6 +56,15 @@
               <span>{{ mapStatus.text }}</span>
             </div>
             <button class="round-button" type="button" aria-label="返回全国视图" @click="resetView">◎</button>
+
+            <template v-if="currentUser">
+              <button v-if="isAdmin" class="auth-button is-admin" type="button" @click="openAdmin">⚙ 管理</button>
+              <button class="user-chip" type="button" :aria-label="`${currentUser.nickname} 的个人主页`" @click="profileOpen = true">
+                <span class="user-avatar">{{ avatarLetter }}</span>
+                <span class="user-name">{{ currentUser.nickname }}</span>
+              </button>
+            </template>
+            <button v-else class="auth-button" type="button" @click="openAuth('login')">登录</button>
           </div>
         </header>
 
@@ -117,6 +126,10 @@
                   <p>{{ selectedAttraction.summary }}</p>
                   <div class="tag-row"><span v-for="tag in selectedAttraction.highlights" :key="tag">{{ tag }}</span></div>
                   <div class="visit-time"><span>建议游览</span><strong>{{ selectedAttraction.visitTime }}</strong></div>
+                  <button class="fav-toggle" :class="{ 'is-active': isFavorite(selectedAttraction.id) }" type="button" @click="toggleFavoriteAction(selectedAttraction)">
+                    <span class="fav-heart">{{ isFavorite(selectedAttraction.id) ? '♥' : '♡' }}</span>
+                    {{ isFavorite(selectedAttraction.id) ? '已收藏' : '收藏' }}
+                  </button>
                   <button class="nav-cta" :class="`is-${selectedAttraction.category}`" type="button" @click="startNavigation(selectedAttraction)">
                     <span class="nav-cta-icon" aria-hidden="true">⌖</span>
                     <span class="nav-cta-copy"><strong>导航到此</strong><small>驾车 · 骑行路线</small></span>
@@ -219,13 +232,164 @@
         </section>
       </main>
 
+      <!-- 登录 / 注册 -->
+      <transition name="modal-fade">
+        <div v-if="authOpen" class="modal-overlay" @click.self="closeAuth">
+          <section class="modal-card auth-card glass-panel" role="dialog" aria-modal="true" aria-label="登录或注册">
+            <button class="modal-close" type="button" aria-label="关闭" @click="closeAuth">×</button>
+            <div class="auth-brand">
+              <span class="auth-brand-orbit" aria-hidden="true"><span></span></span>
+              <div>
+                <strong>{{ authMode === 'login' ? '欢迎回来' : '创建账号' }}</strong>
+                <small>{{ authMode === 'login' ? '登录后即可收藏景点' : '注册后即可收藏景点' }}</small>
+              </div>
+            </div>
+
+            <div class="auth-tabs" role="tablist">
+              <button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'; authError = ''">登录</button>
+              <button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'; authError = ''">注册</button>
+            </div>
+
+            <form class="auth-form" @submit.prevent="submitAuth">
+              <label class="field">
+                <span>用户名</span>
+                <input v-model.trim="authForm.username" type="text" autocomplete="username" placeholder="3–20 个字符" />
+              </label>
+              <label class="field">
+                <span>密码</span>
+                <input v-model="authForm.password" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+              </label>
+              <template v-if="authMode === 'register'">
+                <label class="field">
+                  <span>确认密码</span>
+                  <input v-model="authForm.confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" />
+                </label>
+                <label class="field">
+                  <span>昵称（可选）</span>
+                  <input v-model.trim="authForm.nickname" type="text" placeholder="默认使用用户名" />
+                </label>
+              </template>
+
+              <p v-if="authError" class="form-error">{{ authError }}</p>
+
+              <button class="auth-submit" type="submit">{{ authMode === 'login' ? '登录' : '注册并登录' }}</button>
+            </form>
+
+            <p class="auth-hint">管理员演示账号：<code>admin</code> / <code>admin123</code></p>
+          </section>
+        </div>
+      </transition>
+
+      <!-- 个人主页 -->
+      <transition name="modal-fade">
+        <div v-if="profileOpen && currentUser" class="modal-overlay" @click.self="profileOpen = false">
+          <section class="modal-card profile-card glass-panel" role="dialog" aria-modal="true" aria-label="个人主页">
+            <button class="modal-close" type="button" aria-label="关闭" @click="profileOpen = false">×</button>
+
+            <div class="profile-head">
+              <span class="profile-avatar">{{ avatarLetter }}</span>
+              <div class="profile-identity">
+                <strong>{{ currentUser.nickname }}</strong>
+                <small>@{{ currentUser.username }} · {{ roleLabel }} · 注册于 {{ joinedDate }}</small>
+              </div>
+              <span class="role-badge" :class="{ 'is-admin': isAdmin }">{{ roleLabel }}</span>
+            </div>
+
+            <div class="profile-stats">
+              <div><strong>{{ favoriteAttractions.length }}</strong><small>收藏景点</small></div>
+            </div>
+
+            <div class="section-heading"><div><span>我的收藏</span><small>点击可在地图上定位</small></div></div>
+
+            <div class="favorites-list">
+              <div v-for="item in favoriteAttractions" :key="item.id" class="favorite-item" role="button" tabindex="0" @click="focusFromProfile(item)" @keydown.enter="focusFromProfile(item)">
+                <span class="fav-symbol" :class="`is-${item.category}`">{{ categoryMap[item.category].icon }}</span>
+                <span class="fav-main"><strong>{{ item.name }}</strong><small>{{ item.province }} · {{ item.city }}</small></span>
+                <span class="fav-rating">★ {{ item.rating }}</span>
+                <button class="fav-remove" type="button" aria-label="取消收藏" @click.stop="toggleFavoriteAction(item)">♡</button>
+              </div>
+              <p v-if="!favoriteAttractions.length" class="empty-fav">还没有收藏任何景点，去地图上逛逛吧</p>
+            </div>
+
+            <div class="profile-actions">
+              <button v-if="isAdmin" class="auth-submit is-secondary" type="button" @click="openAdminFromProfile">⚙ 进入管理后台</button>
+              <button class="auth-submit is-ghost" type="button" @click="logout">退出登录</button>
+            </div>
+          </section>
+        </div>
+      </transition>
+
+      <!-- 管理后台 -->
+      <transition name="modal-fade">
+        <div v-if="adminOpen && currentUser" class="modal-overlay" @click.self="adminOpen = false">
+          <section class="modal-card admin-card glass-panel" role="dialog" aria-modal="true" aria-label="景点管理后台">
+            <button class="modal-close" type="button" aria-label="关闭" @click="adminOpen = false">×</button>
+
+            <div class="admin-head">
+              <div><span class="eyebrow">ADMIN</span><strong>景点管理后台</strong><small>共 {{ attractions.length }} 个景点</small></div>
+              <div class="admin-head-actions">
+                <button class="auth-submit is-ghost is-inline" type="button" @click="resetAttractions">恢复默认</button>
+                <button class="auth-submit is-inline" type="button" @click="newAttraction">＋ 新增景点</button>
+              </div>
+            </div>
+
+            <div v-if="adminTab === 'list'" class="admin-list">
+              <div v-for="item in attractions" :key="item.id" class="admin-row">
+                <span class="fav-symbol" :class="`is-${item.category}`">{{ categoryMap[item.category].icon }}</span>
+                <div class="admin-row-main">
+                  <strong>{{ item.name }}</strong>
+                  <small>{{ item.province }} · {{ item.city }} · {{ categoryMap[item.category].label }}</small>
+                </div>
+                <div class="admin-row-actions">
+                  <button type="button" @click="editAttraction(item)">编辑</button>
+                  <button type="button" class="is-danger" @click="deleteAttraction(item)">{{ pendingDeleteId === item.id ? '确认删除' : '删除' }}</button>
+                </div>
+              </div>
+            </div>
+
+            <form v-else class="admin-form" @submit.prevent="saveAttraction">
+              <div class="form-grid">
+                <label class="field"><span>景点名称 *</span><input v-model.trim="attractionForm.name" type="text" placeholder="例如：故宫博物院" /></label>
+                <label class="field"><span>分类 *</span>
+                  <select v-model="attractionForm.category">
+                    <option v-for="c in editableCategories" :key="c.key" :value="c.key">{{ c.label }}</option>
+                  </select>
+                </label>
+                <label class="field"><span>省份 *</span><input v-model.trim="attractionForm.province" type="text" placeholder="例如：北京市" /></label>
+                <label class="field"><span>城市 *</span><input v-model.trim="attractionForm.city" type="text" placeholder="例如：北京" /></label>
+                <label class="field"><span>经度 *</span><input v-model="attractionForm.lng" type="number" step="0.0001" placeholder="70–140，如 116.397" /></label>
+                <label class="field"><span>纬度 *</span><input v-model="attractionForm.lat" type="number" step="0.0001" placeholder="15–56，如 39.9163" /></label>
+                <label class="field"><span>评分</span><input v-model="attractionForm.rating" type="number" step="0.1" min="0" max="5" placeholder="0–5" /></label>
+                <label class="field"><span>热度</span><input v-model="attractionForm.popularity" type="number" step="1" min="0" max="100" placeholder="0–100" /></label>
+              </div>
+              <label class="field"><span>简介</span><textarea v-model.trim="attractionForm.summary" rows="2" placeholder="一句话介绍该景点"></textarea></label>
+              <label class="field"><span>亮点（用逗号分隔）</span><input v-model="attractionForm.highlights" type="text" placeholder="例如：世界文化遗产、皇家建筑、珍贵馆藏" /></label>
+              <label class="field"><span>建议游览时间</span><input v-model.trim="attractionForm.visitTime" type="text" placeholder="例如：约 3–5 小时" /></label>
+
+              <p v-if="adminError" class="form-error">{{ adminError }}</p>
+
+              <div class="admin-form-actions">
+                <button class="auth-submit is-ghost" type="button" @click="adminTab = 'list'; adminError = ''">取消</button>
+                <button class="auth-submit" type="submit">{{ editingId ? '保存修改' : '新增景点' }}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </transition>
+
+      <!-- 轻提示 -->
+      <transition name="toast-fade">
+        <div v-if="toast" class="toast" :key="toast.key">{{ toast.text }}</div>
+      </transition>
     </div>
 
     <noscript>此页面需要启用 JavaScript 才能使用旅游景区地图。</noscript>
     <script src="./libs/vue/vue.global.prod.js"></script>
     <script src="./libs/maplibre/maplibre-gl.js"></script>
     <script src="./js/attractions.js"></script>
+    <script src="./js/store.js"></script>
+    <script src="./js/auth.js"></script>
     <script src="./js/navigation.js"></script>
-    <script src="./js/app.js?v=2"></script>
+    <script src="./js/app.js?v=3"></script>
   </body>
 </html>

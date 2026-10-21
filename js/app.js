@@ -1,4 +1,4 @@
-/* global Vue, maplibregl */
+/* global Vue, maplibregl, NAVIGATION_SERVICE, ATTRACTION_STORE, AUTH */
 
 (function () {
   "use strict";
@@ -25,10 +25,29 @@
       .replaceAll("'", "&#039;");
   }
 
+  // 管理员新增/编辑景点的空白表单模板
+  function emptyAttractionForm() {
+    return {
+      name: "",
+      city: "",
+      province: "",
+      category: "museum",
+      lng: "",
+      lat: "",
+      rating: 4.5,
+      popularity: 80,
+      summary: "",
+      highlights: "",
+      visitTime: "约 2–3 小时",
+    };
+  }
+
+  let toastTimer = null;
+
   Vue.createApp({
     data() {
       return {
-        attractions: window.CHINA_ATTRACTIONS,
+        attractions: window.ATTRACTION_STORE.load(),
         categories: CATEGORIES,
         categoryMap: CATEGORY_MAP,
         activeCategory: "all",
@@ -54,6 +73,24 @@
           summary: null,           // { distance, duration }
           steps: [],
         },
+
+        // 用户与账号
+        currentUser: window.AUTH.getCurrentUser(),
+        authOpen: false,
+        authMode: "login",
+        authForm: { username: "", password: "", nickname: "", confirm: "" },
+        authError: "",
+        profileOpen: false,
+
+        // 管理员
+        adminOpen: false,
+        adminTab: "list",           // list | form
+        attractionForm: emptyAttractionForm(),
+        editingId: null,
+        adminError: "",
+        pendingDeleteId: null,
+
+        toast: null,
       };
     },
 
@@ -97,6 +134,32 @@
       coveragePercent() {
         return Math.round((this.provinceCount / 34) * 100);
       },
+
+      isAdmin() {
+        return !!(this.currentUser && this.currentUser.role === "admin");
+      },
+
+      roleLabel() {
+        return this.isAdmin ? "管理员" : "普通用户";
+      },
+
+      avatarLetter() {
+        const name = this.currentUser && (this.currentUser.nickname || this.currentUser.username);
+        return name ? name.slice(0, 1) : "";
+      },
+
+      joinedDate() {
+        return this.currentUser ? new Date(this.currentUser.createdAt).toLocaleDateString("zh-CN") : "";
+      },
+
+      favoriteAttractions() {
+        const ids = this.currentUser ? this.currentUser.favorites : [];
+        return ids.map((id) => this.attractions.find((a) => a.id === id)).filter(Boolean);
+      },
+
+      editableCategories() {
+        return CATEGORIES.filter((c) => c.key !== "all");
+      },
     },
 
     watch: {
@@ -112,6 +175,7 @@
 
     beforeUnmount() {
       window.removeEventListener("resize", this.resizeMap);
+      if (toastTimer) clearTimeout(toastTimer);
       if (this.map) this.map.remove();
     },
 
@@ -173,28 +237,30 @@
       },
 
       createMarkers() {
-        this.attractions.forEach((item) => {
-          const element = document.createElement("button");
-          element.type = "button";
-          element.className = `tourism-marker is-${item.category}`;
-          element.setAttribute("aria-label", `${item.name}，${item.city}`);
-          element.innerHTML = `<span class="marker-halo"></span><span class="marker-core">${escapeHtml(CATEGORY_MAP[item.category].icon)}</span><span class="marker-pin"></span>`;
+        this.attractions.forEach((item) => this.createMarker(item));
+      },
 
-          const marker = new maplibregl.Marker({ element, anchor: "bottom" }).setLngLat(item.coordinates).addTo(this.map);
-          element.addEventListener("mouseenter", () => this.showHoverCard(item));
-          element.addEventListener("mouseleave", () => {
-            if (this.selectedAttraction?.id !== item.id) this.popup.remove();
-          });
-          element.addEventListener("focus", () => this.showHoverCard(item));
-          element.addEventListener("blur", () => {
-            if (this.selectedAttraction?.id !== item.id) this.popup.remove();
-          });
-          element.addEventListener("click", (event) => {
-            event.stopPropagation();
-            this.focusAttraction(item);
-          });
-          this.markerStore.set(item.id, { marker, element, item });
+      createMarker(item) {
+        const element = document.createElement("button");
+        element.type = "button";
+        element.className = `tourism-marker is-${item.category}`;
+        element.setAttribute("aria-label", `${item.name}，${item.city}`);
+        element.innerHTML = `<span class="marker-halo"></span><span class="marker-core">${escapeHtml(CATEGORY_MAP[item.category].icon)}</span><span class="marker-pin"></span>`;
+
+        const marker = new maplibregl.Marker({ element, anchor: "bottom" }).setLngLat(item.coordinates).addTo(this.map);
+        element.addEventListener("mouseenter", () => this.showHoverCard(item));
+        element.addEventListener("mouseleave", () => {
+          if (this.selectedAttraction?.id !== item.id) this.popup.remove();
         });
+        element.addEventListener("focus", () => this.showHoverCard(item));
+        element.addEventListener("blur", () => {
+          if (this.selectedAttraction?.id !== item.id) this.popup.remove();
+        });
+        element.addEventListener("click", (event) => {
+          event.stopPropagation();
+          this.focusAttraction(item);
+        });
+        this.markerStore.set(item.id, { marker, element, item });
       },
 
       showHoverCard(item) {
@@ -265,6 +331,250 @@
 
       resizeMap() {
         if (this.map) this.map.resize();
+      },
+
+      notify(text) {
+        this.toast = { text, key: Date.now() };
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          this.toast = null;
+        }, 2600);
+      },
+
+      // ===== 账号：登录 / 注册 / 退出 =====
+      openAuth(mode) {
+        this.authMode = mode || "login";
+        this.authError = "";
+        this.authOpen = true;
+      },
+
+      closeAuth() {
+        this.authOpen = false;
+        this.authError = "";
+      },
+
+      submitAuth() {
+        this.authError = "";
+        if (this.authMode === "login") this.doLogin();
+        else this.doRegister();
+      },
+
+      doLogin() {
+        try {
+          const user = window.AUTH.login(this.authForm.username, this.authForm.password);
+          this.currentUser = user;
+          this.authOpen = false;
+          this.resetAuthForm();
+          this.notify(`欢迎回来，${user.nickname || user.username}`);
+        } catch (err) {
+          this.authError = err.message;
+        }
+      },
+
+      doRegister() {
+        if (this.authForm.password !== this.authForm.confirm) {
+          this.authError = "两次输入的密码不一致";
+          return;
+        }
+        try {
+          const user = window.AUTH.register({
+            username: this.authForm.username,
+            password: this.authForm.password,
+            nickname: this.authForm.nickname,
+          });
+          this.currentUser = window.AUTH.login(this.authForm.username, this.authForm.password);
+          this.authOpen = false;
+          this.resetAuthForm();
+          this.notify(`注册成功，欢迎 ${user.nickname || user.username}`);
+        } catch (err) {
+          this.authError = err.message;
+        }
+      },
+
+      resetAuthForm() {
+        this.authForm = { username: "", password: "", nickname: "", confirm: "" };
+      },
+
+      logout() {
+        window.AUTH.logout();
+        this.currentUser = null;
+        this.profileOpen = false;
+        this.adminOpen = false;
+        this.notify("已退出登录");
+      },
+
+      // ===== 收藏 =====
+      isFavorite(id) {
+        return !!(this.currentUser && this.currentUser.favorites.indexOf(id) >= 0);
+      },
+
+      toggleFavoriteAction(item) {
+        if (!item) return;
+        if (!this.currentUser) {
+          this.openAuth("login");
+          this.notify("请先登录后再收藏");
+          return;
+        }
+        const favorites = window.AUTH.toggleFavorite(this.currentUser.id, item.id);
+        this.currentUser.favorites = favorites;
+        const added = favorites.indexOf(item.id) >= 0;
+        this.notify(added ? `已收藏「${item.name}」` : `已取消收藏「${item.name}」`);
+      },
+
+      focusFromProfile(item) {
+        this.profileOpen = false;
+        this.focusAttraction(item);
+      },
+
+      // ===== 管理员：景点增删改 =====
+      openAdmin() {
+        this.adminOpen = true;
+        this.adminTab = "list";
+        this.adminError = "";
+        this.pendingDeleteId = null;
+      },
+
+      openAdminFromProfile() {
+        this.profileOpen = false;
+        this.openAdmin();
+      },
+
+      newAttraction() {
+        this.attractionForm = emptyAttractionForm();
+        this.editingId = null;
+        this.adminError = "";
+        this.adminTab = "form";
+      },
+
+      editAttraction(item) {
+        this.attractionForm = {
+          name: item.name,
+          city: item.city,
+          province: item.province,
+          category: item.category,
+          lng: item.coordinates[0],
+          lat: item.coordinates[1],
+          rating: item.rating,
+          popularity: item.popularity,
+          summary: item.summary,
+          highlights: item.highlights.join("、"),
+          visitTime: item.visitTime,
+        };
+        this.editingId = item.id;
+        this.adminError = "";
+        this.adminTab = "form";
+      },
+
+      saveAttraction() {
+        this.adminError = "";
+        const f = this.attractionForm;
+        const name = String(f.name || "").trim();
+        const city = String(f.city || "").trim();
+        const province = String(f.province || "").trim();
+        if (!name) return (this.adminError = "请填写景点名称");
+        if (!city) return (this.adminError = "请填写所在城市");
+        if (!province) return (this.adminError = "请填写所在省份");
+
+        const lng = Number(f.lng);
+        const lat = Number(f.lat);
+        if (!Number.isFinite(lng) || lng < 70 || lng > 140) return (this.adminError = "经度需为 70–140 之间的数字");
+        if (!Number.isFinite(lat) || lat < 15 || lat > 56) return (this.adminError = "纬度需为 15–56 之间的数字");
+
+        const rating = Number(f.rating);
+        const popularity = Number(f.popularity);
+        if (!Number.isFinite(rating) || rating < 0 || rating > 5) return (this.adminError = "评分需为 0–5 之间的数字");
+        if (!Number.isFinite(popularity) || popularity < 0 || popularity > 100) return (this.adminError = "热度需为 0–100 之间的数字");
+
+        const highlights = String(f.highlights || "")
+          .split(/[,，、\s]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+        if (this.editingId) {
+          const item = this.attractions.find((a) => a.id === this.editingId);
+          if (!item) return (this.adminError = "未找到要编辑的景点");
+          Object.assign(item, {
+            name,
+            city,
+            province,
+            category: f.category,
+            coordinates: [lng, lat],
+            rating,
+            popularity,
+            summary: String(f.summary || "").trim(),
+            highlights,
+            visitTime: String(f.visitTime || "").trim() || "约 2–3 小时",
+          });
+          this.rebuildMarker(item);
+          this.notify(`已更新「${name}」`);
+        } else {
+          const item = {
+            id: "att-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            name,
+            city,
+            province,
+            category: f.category,
+            coordinates: [lng, lat],
+            rating,
+            popularity,
+            summary: String(f.summary || "").trim(),
+            highlights,
+            visitTime: String(f.visitTime || "").trim() || "约 2–3 小时",
+          };
+          this.attractions.push(item);
+          this.createMarker(item);
+          this.updateMarkerVisibility();
+          this.notify(`已新增景点「${name}」`);
+        }
+
+        window.ATTRACTION_STORE.save(this.attractions);
+        this.adminTab = "list";
+      },
+
+      rebuildMarker(item) {
+        const entry = this.markerStore.get(item.id);
+        if (entry) {
+          entry.marker.remove();
+          this.markerStore.delete(item.id);
+        }
+        this.createMarker(item);
+        this.updateMarkerVisibility();
+      },
+
+      deleteAttraction(item) {
+        if (this.pendingDeleteId !== item.id) {
+          this.pendingDeleteId = item.id;
+          return;
+        }
+        const entry = this.markerStore.get(item.id);
+        if (entry) {
+          entry.marker.remove();
+          this.markerStore.delete(item.id);
+        }
+        const index = this.attractions.findIndex((a) => a.id === item.id);
+        if (index >= 0) this.attractions.splice(index, 1);
+        if (this.selectedAttraction && this.selectedAttraction.id === item.id) {
+          this.selectedAttraction = null;
+          this.popup.remove();
+        }
+        this.pendingDeleteId = null;
+        window.ATTRACTION_STORE.save(this.attractions);
+        this.notify(`已删除「${item.name}」`);
+      },
+
+      resetAttractions() {
+        if (!window.confirm("确定恢复默认景点数据？当前新增/修改的景点将丢失。")) return;
+        this.attractions = window.ATTRACTION_STORE.reset();
+        this.markerStore.forEach(({ marker }) => marker.remove());
+        this.markerStore.clear();
+        this.createMarkers();
+        this.updateMarkerVisibility();
+        if (this.selectedAttraction) {
+          this.selectedAttraction = null;
+          this.popup.remove();
+        }
+        this.pendingDeleteId = null;
+        this.notify("已恢复默认景点数据");
       },
 
       startNavigation(item) {
