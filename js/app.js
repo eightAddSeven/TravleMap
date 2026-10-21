@@ -47,7 +47,7 @@
   Vue.createApp({
     data() {
       return {
-        attractions: window.ATTRACTION_STORE.load(),
+        attractions: [],
         categories: CATEGORIES,
         categoryMap: CATEGORY_MAP,
         activeCategory: "all",
@@ -75,7 +75,7 @@
         },
 
         // 用户与账号
-        currentUser: window.AUTH.getCurrentUser(),
+        currentUser: null,
         authOpen: false,
         authMode: "login",
         authForm: { username: "", password: "", nickname: "", confirm: "" },
@@ -168,9 +168,9 @@
       },
     },
 
-    mounted() {
-      this.initMap();
+    async mounted() {
       window.addEventListener("resize", this.resizeMap);
+      await this.bootstrap();
     },
 
     beforeUnmount() {
@@ -180,6 +180,21 @@
     },
 
     methods: {
+      // 初始化：先向后端拉取景点与登录态，再挂载地图（标记依赖景点数据）。
+      async bootstrap() {
+        try {
+          this.attractions = await window.ATTRACTION_STORE.list();
+        } catch (err) {
+          this.notify(err.message || "景点数据加载失败，请确认后端服务已启动");
+        }
+        try {
+          this.currentUser = await window.AUTH.getCurrentUser();
+        } catch (err) {
+          /* 未登录或会话失效，保持未登录状态 */
+        }
+        this.initMap();
+      },
+
       initMap() {
         this.map = new maplibregl.Map({
           container: "map",
@@ -359,9 +374,9 @@
         else this.doRegister();
       },
 
-      doLogin() {
+      async doLogin() {
         try {
-          const user = window.AUTH.login(this.authForm.username, this.authForm.password);
+          const user = await window.AUTH.login(this.authForm.username, this.authForm.password);
           this.currentUser = user;
           this.authOpen = false;
           this.resetAuthForm();
@@ -371,18 +386,18 @@
         }
       },
 
-      doRegister() {
+      async doRegister() {
         if (this.authForm.password !== this.authForm.confirm) {
           this.authError = "两次输入的密码不一致";
           return;
         }
         try {
-          const user = window.AUTH.register({
+          const user = await window.AUTH.register({
             username: this.authForm.username,
             password: this.authForm.password,
             nickname: this.authForm.nickname,
           });
-          this.currentUser = window.AUTH.login(this.authForm.username, this.authForm.password);
+          this.currentUser = user;
           this.authOpen = false;
           this.resetAuthForm();
           this.notify(`注册成功，欢迎 ${user.nickname || user.username}`);
@@ -395,8 +410,8 @@
         this.authForm = { username: "", password: "", nickname: "", confirm: "" };
       },
 
-      logout() {
-        window.AUTH.logout();
+      async logout() {
+        await window.AUTH.logout();
         this.currentUser = null;
         this.profileOpen = false;
         this.adminOpen = false;
@@ -408,17 +423,21 @@
         return !!(this.currentUser && this.currentUser.favorites.indexOf(id) >= 0);
       },
 
-      toggleFavoriteAction(item) {
+      async toggleFavoriteAction(item) {
         if (!item) return;
         if (!this.currentUser) {
           this.openAuth("login");
           this.notify("请先登录后再收藏");
           return;
         }
-        const favorites = window.AUTH.toggleFavorite(this.currentUser.id, item.id);
-        this.currentUser.favorites = favorites;
-        const added = favorites.indexOf(item.id) >= 0;
-        this.notify(added ? `已收藏「${item.name}」` : `已取消收藏「${item.name}」`);
+        try {
+          const favorites = await window.AUTH.toggleFavorite(item.id);
+          this.currentUser.favorites = favorites;
+          const added = favorites.indexOf(item.id) >= 0;
+          this.notify(added ? `已收藏「${item.name}」` : `已取消收藏「${item.name}」`);
+        } catch (err) {
+          this.notify(err.message);
+        }
       },
 
       focusFromProfile(item) {
@@ -465,7 +484,7 @@
         this.adminTab = "form";
       },
 
-      saveAttraction() {
+      async saveAttraction() {
         this.adminError = "";
         const f = this.attractionForm;
         const name = String(f.name || "").trim();
@@ -490,44 +509,43 @@
           .map((s) => s.trim())
           .filter(Boolean);
 
-        if (this.editingId) {
-          const item = this.attractions.find((a) => a.id === this.editingId);
-          if (!item) return (this.adminError = "未找到要编辑的景点");
-          Object.assign(item, {
-            name,
-            city,
-            province,
-            category: f.category,
-            coordinates: [lng, lat],
-            rating,
-            popularity,
-            summary: String(f.summary || "").trim(),
-            highlights,
-            visitTime: String(f.visitTime || "").trim() || "约 2–3 小时",
-          });
-          this.rebuildMarker(item);
-          this.notify(`已更新「${name}」`);
-        } else {
-          const item = {
-            id: "att-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-            name,
-            city,
-            province,
-            category: f.category,
-            coordinates: [lng, lat],
-            rating,
-            popularity,
-            summary: String(f.summary || "").trim(),
-            highlights,
-            visitTime: String(f.visitTime || "").trim() || "约 2–3 小时",
-          };
-          this.attractions.push(item);
-          this.createMarker(item);
-          this.updateMarkerVisibility();
-          this.notify(`已新增景点「${name}」`);
+        const payload = {
+          name,
+          city,
+          province,
+          category: f.category,
+          coordinates: [lng, lat],
+          rating,
+          popularity,
+          summary: String(f.summary || "").trim(),
+          highlights,
+          visitTime: String(f.visitTime || "").trim() || "约 2–3 小时",
+        };
+
+        try {
+          if (this.editingId) {
+            const item = this.attractions.find((a) => a.id === this.editingId);
+            if (!item) return (this.adminError = "未找到要编辑的景点");
+            await window.ATTRACTION_STORE.update(this.editingId, payload);
+            Object.assign(item, payload);
+            this.rebuildMarker(item);
+            this.notify(`已更新「${name}」`);
+          } else {
+            const item = {
+              id: "att-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+              ...payload,
+            };
+            await window.ATTRACTION_STORE.create(item);
+            this.attractions.push(item);
+            this.createMarker(item);
+            this.updateMarkerVisibility();
+            this.notify(`已新增景点「${name}」`);
+          }
+        } catch (err) {
+          this.adminError = err.message;
+          return;
         }
 
-        window.ATTRACTION_STORE.save(this.attractions);
         this.adminTab = "list";
       },
 
@@ -541,9 +559,16 @@
         this.updateMarkerVisibility();
       },
 
-      deleteAttraction(item) {
+      async deleteAttraction(item) {
         if (this.pendingDeleteId !== item.id) {
           this.pendingDeleteId = item.id;
+          return;
+        }
+        try {
+          await window.ATTRACTION_STORE.remove(item.id);
+        } catch (err) {
+          this.pendingDeleteId = null;
+          this.notify(err.message);
           return;
         }
         const entry = this.markerStore.get(item.id);
@@ -558,13 +583,17 @@
           this.popup.remove();
         }
         this.pendingDeleteId = null;
-        window.ATTRACTION_STORE.save(this.attractions);
         this.notify(`已删除「${item.name}」`);
       },
 
-      resetAttractions() {
+      async resetAttractions() {
         if (!window.confirm("确定恢复默认景点数据？当前新增/修改的景点将丢失。")) return;
-        this.attractions = window.ATTRACTION_STORE.reset();
+        try {
+          this.attractions = await window.ATTRACTION_STORE.reset();
+        } catch (err) {
+          this.notify(err.message);
+          return;
+        }
         this.markerStore.forEach(({ marker }) => marker.remove());
         this.markerStore.clear();
         this.createMarkers();

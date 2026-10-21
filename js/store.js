@@ -1,32 +1,29 @@
-/* 景点数据持久化：首次运行从静态数据初始化，之后读本地存储，供管理员新增、编辑与删除。 */
+/* 景点数据服务：通过 REST API 读写后端数据库，替代原来的 localStorage。
+   需先启动 server 目录下的 Node 后端（默认 http://localhost:3000）。 */
 window.ATTRACTION_STORE = (function () {
   "use strict";
 
-  const KEY = "yunchina.attractions";
+  window.API_BASE = window.API_BASE || "http://localhost:3000/api";
+  const TOKEN_KEY = "yunchina.token";
 
-  function load() {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) return parsed;
-      }
-    } catch (err) {
-      /* 忽略损坏的数据，回退到默认景点 */
-    }
-    const defaults = (window.CHINA_ATTRACTIONS || []).map((item) => ({ ...item }));
-    save(defaults);
-    return defaults;
+  async function request(path, options = {}) {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = "Bearer " + token;
+    const res = await fetch(window.API_BASE + path, {
+      ...options,
+      headers: { ...headers, ...(options.headers || {}) },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "请求失败，请确认后端服务已启动");
+    return data;
   }
 
-  function save(attractions) {
-    localStorage.setItem(KEY, JSON.stringify(attractions));
-  }
-
-  function reset() {
-    localStorage.removeItem(KEY);
-    return load();
-  }
-
-  return { load, save, reset };
+  return {
+    list: () => request("/attractions"),
+    create: (item) => request("/attractions", { method: "POST", body: JSON.stringify(item) }),
+    update: (id, item) => request("/attractions/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify(item) }),
+    remove: (id) => request("/attractions/" + encodeURIComponent(id), { method: "DELETE" }),
+    reset: () => request("/attractions/reset", { method: "POST" }),
+  };
 })();

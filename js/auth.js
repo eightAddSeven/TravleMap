@@ -1,128 +1,75 @@
-/* 用户账号服务：注册、登录、会话与收藏，基于 localStorage 持久化。
-   注意：这是课程演示用的纯前端方案，密码散列并非加密学安全，不应用于生产环境。 */
+/* 用户账号服务：注册、登录、会话与收藏，改为调用后端 REST API。
+   会话凭据（token）保存在 localStorage，随请求以 Authorization 头携带。 */
 window.AUTH = (function () {
   "use strict";
 
-  const USERS_KEY = "yunchina.users";
-  const SESSION_KEY = "yunchina.session";
-  const ADMIN_USERNAME = "admin";
-  const ADMIN_PASSWORD = "admin123";
+  const API_BASE = window.API_BASE || "http://localhost:3000/api";
+  const TOKEN_KEY = "yunchina.token";
 
-  // 简单字符串散列（djb2 变体），仅避免明文存储，供课程演示。
-  function hashPassword(password) {
-    const salted = `yunchina::${password}`;
-    let hash = 5381;
-    for (let i = 0; i < salted.length; i++) {
-      hash = ((hash << 5) + hash + salted.charCodeAt(i)) >>> 0;
-    }
-    return "h" + hash.toString(36) + "." + salted.length.toString(36);
+  function getToken() {
+    return localStorage.getItem(TOKEN_KEY) || "";
   }
 
-  function readJSON(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch (err) {
-      return fallback;
-    }
+  function setToken(token) {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
   }
 
-  function writeJSON(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-  }
-
-  function getUsers() {
-    return readJSON(USERS_KEY, []);
-  }
-
-  function saveUsers(users) {
-    writeJSON(USERS_KEY, users);
-  }
-
-  function findUser(username) {
-    return getUsers().find((u) => u.username === username) || null;
-  }
-
-  // 首次加载时确保存在管理员账号。
-  function seedAdmin() {
-    const users = getUsers();
-    if (users.some((u) => u.username === ADMIN_USERNAME)) return;
-    users.push({
-      id: "admin",
-      username: ADMIN_USERNAME,
-      passwordHash: hashPassword(ADMIN_PASSWORD),
-      nickname: "管理员",
-      role: "admin",
-      createdAt: Date.now(),
-      favorites: [],
+  async function request(path, options = {}) {
+    const token = getToken();
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = "Bearer " + token;
+    const res = await fetch(API_BASE + path, {
+      ...options,
+      headers: { ...headers, ...(options.headers || {}) },
     });
-    saveUsers(users);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "请求失败，请确认后端服务已启动");
+    return data;
   }
 
-  function register({ username, password, nickname }) {
-    const name = String(username || "").trim();
-    if (!name) throw new Error("请输入用户名");
-    if (name.length < 3 || name.length > 20) throw new Error("用户名需为 3–20 个字符");
-    if (String(password || "").length < 6) throw new Error("密码至少需要 6 位");
-    if (findUser(name)) throw new Error("该用户名已被注册");
-
-    const users = getUsers();
-    const user = {
-      id: "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      username: name,
-      passwordHash: hashPassword(password),
-      nickname: (nickname || "").trim() || name,
-      role: "user",
-      createdAt: Date.now(),
-      favorites: [],
-    };
-    users.push(user);
-    saveUsers(users);
-    return user;
+  async function register({ username, password, nickname }) {
+    const data = await request("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ username, password, nickname }),
+    });
+    setToken(data.token);
+    return data.user;
   }
 
-  function login(username, password) {
-    const user = findUser(String(username || "").trim());
-    if (!user || user.passwordHash !== hashPassword(String(password || ""))) {
-      throw new Error("用户名或密码错误");
+  async function login(username, password) {
+    const data = await request("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+    setToken(data.token);
+    return data.user;
+  }
+
+  async function logout() {
+    try {
+      await request("/auth/logout", { method: "POST" });
+    } catch (err) {
+      /* 后端登出失败也照常清除本地凭据 */
     }
-    writeJSON(SESSION_KEY, user.id);
-    return user;
+    setToken(null);
   }
 
-  function logout() {
-    localStorage.removeItem(SESSION_KEY);
+  // 返回当前登录用户；未登录或会话失效时返回 null（不抛错）。
+  async function getCurrentUser() {
+    if (!getToken()) return null;
+    try {
+      const data = await request("/auth/me");
+      return data.user;
+    } catch (err) {
+      return null;
+    }
   }
 
-  function getCurrentUser() {
-    const id = readJSON(SESSION_KEY, null);
-    if (!id) return null;
-    return getUsers().find((u) => u.id === id) || null;
+  async function toggleFavorite(attractionId) {
+    const data = await request("/auth/favorites/" + encodeURIComponent(attractionId), { method: "POST" });
+    return data.favorites;
   }
 
-  // 切换收藏状态，返回更新后的收藏 id 列表。
-  function toggleFavorite(userId, attractionId) {
-    const users = getUsers();
-    const user = users.find((u) => u.id === userId);
-    if (!user) return [];
-    const index = user.favorites.indexOf(attractionId);
-    if (index >= 0) user.favorites.splice(index, 1);
-    else user.favorites.push(attractionId);
-    saveUsers(users);
-    return user.favorites.slice();
-  }
-
-  seedAdmin();
-
-  return {
-    ADMIN_USERNAME,
-    ADMIN_PASSWORD,
-    getUsers,
-    saveUsers,
-    register,
-    login,
-    logout,
-    getCurrentUser,
-    toggleFavorite,
-  };
+  return { register, login, logout, getCurrentUser, toggleFavorite };
 })();
