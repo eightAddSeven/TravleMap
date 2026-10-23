@@ -81,6 +81,11 @@
         authForm: { username: "", password: "", nickname: "", confirm: "" },
         authError: "",
         profileOpen: false,
+        profileTab: "favorites",       // favorites | settings
+        passwordForm: { current: "", next: "", confirm: "" },
+        passwordError: "",
+        bindingForm: { email: "", phone: "" },
+        bindingError: "",
 
         // 管理员
         adminOpen: false,
@@ -155,6 +160,12 @@
       favoriteAttractions() {
         const ids = this.currentUser ? this.currentUser.favorites : [];
         return ids.map((id) => this.attractions.find((a) => a.id === id)).filter(Boolean);
+      },
+
+      bindingCount() {
+        const u = this.currentUser;
+        if (!u) return 0;
+        return [u.email, u.phone].filter(Boolean).length;
       },
 
       editableCategories() {
@@ -416,6 +427,46 @@
         this.profileOpen = false;
         this.adminOpen = false;
         this.notify("已退出登录");
+      },
+
+      // 打开个人中心：重置各功能表单，并带入当前绑定信息。
+      openProfile() {
+        this.profileOpen = true;
+        this.profileTab = "favorites";
+        this.passwordForm = { current: "", next: "", confirm: "" };
+        this.passwordError = "";
+        this.bindingError = "";
+        this.bindingForm = {
+          email: (this.currentUser && this.currentUser.email) || "",
+          phone: (this.currentUser && this.currentUser.phone) || "",
+        };
+      },
+
+      async changePassword() {
+        this.passwordError = "";
+        const { current, next, confirm } = this.passwordForm;
+        if (!current) { this.passwordError = "请输入当前密码"; return; }
+        if (next.length < 6) { this.passwordError = "新密码至少需要 6 位"; return; }
+        if (next !== confirm) { this.passwordError = "两次输入的新密码不一致"; return; }
+        try {
+          await window.AUTH.changePassword(current, next);
+          this.passwordForm = { current: "", next: "", confirm: "" };
+          this.notify("密码已修改");
+        } catch (err) {
+          this.passwordError = err.message;
+        }
+      },
+
+      async saveBindings() {
+        this.bindingError = "";
+        try {
+          const user = await window.AUTH.updateBindings(this.bindingForm);
+          this.currentUser = user;
+          this.bindingForm = { email: user.email || "", phone: user.phone || "" };
+          this.notify("绑定信息已保存");
+        } catch (err) {
+          this.bindingError = err.message;
+        }
       },
 
       // ===== 收藏 =====

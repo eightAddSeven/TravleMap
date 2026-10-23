@@ -2142,49 +2142,53 @@ noscript {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* ===================== 个人主页 ===================== */
+/* ===================== 个人中心 ===================== */
+.profile-card {
+  width: min(480px, 100%);
+}
+
 .profile-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 
 .profile-avatar {
   display: grid;
-  width: 52px;
-  height: 52px;
+  width: 72px;
+  height: 72px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 16px;
+  border-radius: 20px;
   color: white;
   background: linear-gradient(145deg, #8a70ee, #5b43d2);
-  box-shadow: 0 10px 22px rgba(114, 87, 232, 0.3);
-  font-size: 1.4rem;
+  box-shadow: 0 12px 26px rgba(114, 87, 232, 0.34);
+  font-size: 1.9rem;
   font-weight: 800;
 }
 
 .profile-identity {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 
 .profile-identity strong {
-  font-size: 0.95rem;
+  font-size: 1.15rem;
 }
 
 .profile-identity small {
   color: var(--muted);
-  font-size: 0.56rem;
+  font-size: 0.64rem;
 }
 
 .role-badge {
   margin-left: auto;
-  padding: 4px 8px;
+  padding: 5px 10px;
   border-radius: 999px;
   color: var(--violet);
   background: rgba(114, 87, 232, 0.1);
-  font-size: 0.56rem;
+  font-size: 0.62rem;
   font-weight: 800;
 }
 
@@ -2194,32 +2198,62 @@ noscript {
 }
 
 .profile-stats {
-  display: flex;
-  margin-top: 16px;
-  padding: 12px;
-  border-radius: 13px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 14px;
   background: linear-gradient(135deg, rgba(114, 87, 232, 0.1), rgba(57, 187, 219, 0.1));
 }
 
 .profile-stats > div {
   display: grid;
-  gap: 2px;
+  gap: 4px;
 }
 
 .profile-stats strong {
-  font-size: 1.1rem;
+  font-size: 1.4rem;
 }
 
 .profile-stats small {
   color: var(--muted);
-  font-size: 0.54rem;
+  font-size: 0.62rem;
+}
+
+.profile-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 18px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(240, 240, 248, 0.9);
+}
+
+.profile-tabs button {
+  padding: 9px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+  transition: color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.profile-tabs button.active {
+  color: var(--violet);
+  background: white;
+  box-shadow: 0 4px 12px rgba(80, 70, 150, 0.12);
 }
 
 .favorites-list {
   display: grid;
-  max-height: 300px;
+  max-height: 320px;
   overflow-y: auto;
-  margin-top: 8px;
+  margin-top: 10px;
   scrollbar-width: none;
 }
 
@@ -2229,11 +2263,11 @@ noscript {
 
 .favorite-item {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  grid-template-columns: 38px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   width: 100%;
-  padding: 8px 4px;
+  padding: 10px 4px;
   border-bottom: 1px solid rgba(126, 129, 161, 0.1);
   cursor: pointer;
   text-align: left;
@@ -2249,13 +2283,13 @@ noscript {
 
 .fav-symbol {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   place-items: center;
-  border-radius: 9px;
+  border-radius: 10px;
   color: white;
   background: var(--violet);
-  font-size: 0.72rem;
+  font-size: 0.8rem;
 }
 
 .fav-symbol.is-museum { background: var(--purple); }
@@ -2266,13 +2300,13 @@ noscript {
 
 .fav-main {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
 .fav-main strong {
   overflow: hidden;
-  font-size: 0.7rem;
+  font-size: 0.76rem;
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: color 150ms ease;
@@ -2280,19 +2314,19 @@ noscript {
 
 .fav-main small {
   color: var(--muted);
-  font-size: 0.54rem;
+  font-size: 0.58rem;
 }
 
 .fav-rating {
   color: #ef9d36;
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 800;
 }
 
 .fav-remove {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   place-items: center;
   border: 0;
@@ -2300,7 +2334,7 @@ noscript {
   color: #d96b87;
   background: rgba(230, 93, 123, 0.08);
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 1.05rem;
 }
 
 .fav-remove:hover {
@@ -2309,16 +2343,62 @@ noscript {
 
 .empty-fav {
   margin: 0;
-  padding: 24px 0;
+  padding: 28px 0;
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   text-align: center;
 }
 
 .profile-actions {
   display: grid;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 16px;
+}
+
+.settings-block {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(245, 246, 251, 0.8);
+}
+
+.settings-block + .settings-block {
+  margin-top: 12px;
+}
+
+.settings-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-title > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(114, 87, 232, 0.1);
+  font-size: 0.95rem;
+}
+
+.settings-title > div {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-title strong {
+  font-size: 0.82rem;
+}
+
+.settings-title small {
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.settings-form {
+  margin-top: 12px;
 }
 
 /* ===================== 管理后台 ===================== */

@@ -138,6 +138,35 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
+// 修改密码：需提供当前密码校验，新密码至少 6 位。
+app.put("/api/auth/password", (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const currentPassword = String(req.body.currentPassword || "");
+  const newPassword = String(req.body.newPassword || "");
+  if (!store.verifyCredentials(user.username, currentPassword)) {
+    return res.status(401).json({ error: "当前密码不正确" });
+  }
+  if (newPassword.length < 6) return res.status(400).json({ error: "新密码至少需要 6 位" });
+  store.updatePassword(user.id, newPassword);
+  res.json({ ok: true });
+});
+
+// 绑定 / 更新邮箱与手机号。
+app.put("/api/auth/bindings", (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const email = String(req.body.email || "").trim();
+  const phone = String(req.body.phone || "").trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "邮箱格式不正确" });
+  }
+  if (phone && !/^1[3-9]\d{9}$/.test(phone)) {
+    return res.status(400).json({ error: "手机号格式不正确（需为 11 位大陆手机号）" });
+  }
+  res.json({ user: store.updateBindings(user.id, { email, phone }) });
+});
+
 app.get("/api/auth/me", (req, res) => {
   const user = getAuthUser(req);
   if (!user) return res.status(401).json({ error: "未登录" });

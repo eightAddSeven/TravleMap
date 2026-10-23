@@ -71,5 +71,21 @@ window.AUTH = (function () {
     return data.favorites;
   }
 
-  return { register, login, logout, getCurrentUser, toggleFavorite };
+  async function changePassword(currentPassword, newPassword) {
+    return request("/auth/password", {
+      method: "PUT",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  }
+
+  // 绑定 / 更新邮箱与手机号，返回更新后的用户对象。
+  async function updateBindings({ email, phone }) {
+    const data = await request("/auth/bindings", {
+      method: "PUT",
+      body: JSON.stringify({ email, phone }),
+    });
+    return data.user;
+  }
+
+  return { register, login, logout, getCurrentUser, toggleFavorite, changePassword, updateBindings };
 })();

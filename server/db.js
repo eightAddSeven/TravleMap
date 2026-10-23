@@ -31,7 +31,9 @@ db.exec(`
     nickname      TEXT NOT NULL,
     role          TEXT NOT NULL DEFAULT 'user',
     created_at    INTEGER NOT NULL,
-    favorites     TEXT NOT NULL DEFAULT '[]'
+    favorites     TEXT NOT NULL DEFAULT '[]',
+    email         TEXT NOT NULL DEFAULT '',
+    phone         TEXT NOT NULL DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -40,6 +42,14 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 `);
+
+// 迁移：早期版本的 users 表没有 email / phone 列，为已存在的库补齐。
+function ensureColumn(table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) db.exec(ddl);
+}
+ensureColumn("users", "email", "ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+ensureColumn("users", "phone", "ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
 
 // ---------- 行 → 前端对象 ----------
 function rowToAttraction(r) {
@@ -66,6 +76,8 @@ function rowToUser(r) {
     role: r.role,
     createdAt: r.created_at,
     favorites: JSON.parse(r.favorites || "[]"),
+    email: r.email || "",
+    phone: r.phone || "",
   };
 }
 
@@ -149,7 +161,7 @@ function createUser({ username, password, nickname }) {
     INSERT INTO users (id, username, password_hash, nickname, role, created_at, favorites)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(id, username, hashPassword(password), nick, "user", now, "[]");
-  return { id, username, nickname: nick, role: "user", createdAt: now, favorites: [] };
+  return { id, username, nickname: nick, role: "user", createdAt: now, favorites: [], email: "", phone: "" };
 }
 
 // 校验用户名密码，成功返回用户对象（不含密码散列），失败返回 null。
@@ -163,6 +175,21 @@ function verifyCredentials(username, password) {
 function setFavorites(userId, favorites) {
   db.prepare("UPDATE users SET favorites = ? WHERE id = ?").run(JSON.stringify(favorites), userId);
   return favorites;
+}
+
+// 修改密码：传入明文，内部散列后落库。
+function updatePassword(userId, password) {
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), userId);
+}
+
+// 绑定 / 更新邮箱与手机号，返回更新后的用户对象。
+function updateBindings(userId, { email, phone }) {
+  db.prepare("UPDATE users SET email = ?, phone = ? WHERE id = ?").run(
+    String(email || "").trim(),
+    String(phone || "").trim(),
+    userId,
+  );
+  return findUserById(userId);
 }
 
 // ---------- 会话 ----------
@@ -225,6 +252,8 @@ module.exports = {
   createUser,
   verifyCredentials,
   setFavorites,
+  updatePassword,
+  updateBindings,
   createSession,
   deleteSession,
   findUserByToken,
